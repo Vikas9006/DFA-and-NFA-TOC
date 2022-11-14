@@ -1,7 +1,8 @@
 from Tree import Node
 from parser import parser
-
-epsilon = "ε"
+from DFS import DFS, BFS
+from constants import epsilon
+from DSU import dsu, renumber, find
 
 class NFA:
     def __init__(self, Q, sigma, delta, S, F):
@@ -81,7 +82,7 @@ class NFA:
                     lnfa.delta[final1] = dict()
                 if epsilon not in lnfa.delta[final1]:
                     lnfa.delta[final1][epsilon] = set()
-                lnfa.delta[final1][epsilon] = rnfa.S
+                lnfa.delta[final1][epsilon] = lnfa.delta[final1][epsilon].union(rnfa.S)
 
             # Remove final states of first NFA
             lnfa.F.clear()
@@ -150,42 +151,122 @@ class NFA:
             nfa.F = lnfa.F.union(set([0]))
         return nfa
 
+    def state_closure(self, k, symbols):
+        return DFS(self, k, symbols)
+
     def getDFA(self):
-        pass
+        dfa = DFA(set(), set(), dict(), None, set())
+        newQ = set()
+        newDelta = dict()
+        newS = set()
+        newF = set()
+        # States Defined
+        for i in range(1 << len(self.Q)):
+                newQ.add(i)
 
+        # define delta
+        for i in range(1 << len(self.Q)):
+            newDelta[i] = dict()
+            for sym in self.sigma:
+                reachable = set()
+                reach_states = 0
+                for j in range(i.bit_length()):
+                    if (i & (1 << j)) != 0 and (j in self.delta) and (sym in self.delta[j]):
+                        for k in self.delta[j][sym]:
+                            reachable = self.state_closure(k, set([epsilon]))
 
+                        for k in reachable:
+                            reach_states = reach_states | (1 << k)
+                newDelta[i][sym] = set([reach_states])
 
-class DFA:
-    def __init__(self, Q, sigma, delta, s, F):
-        self.Q = Q
-        self.sigma = sigma
-        self.delta = delta
-        self.s = s
-        self.F = F
+        # define s
+        newS = 0
+        for i in self.S:
+            reachable = self.state_closure(i, set([epsilon]))
+            for j in reachable:
+                newS = newS | (1 << j)
+        
 
-    def __str__(self):
-        return "DFA = (" + "\n" + \
-         "Q = " + str(self.Q) + "\n" + \
-            "Σ = " + str(self.sigma) + "\n" + \
-            "δ = " + str(self.delta) + "\n" + \
-            "s = " + str(self.S) + "\n" + \
-            "F = " + str(self.F) + "\n" + \
-            ")" + "\n"
+        # define F
+        for i in range(len(newQ)):
+            states = set()
+            for j in range(i.bit_length()):
+                if (i & (1 << j)) != 0:
+                    states.add(j)
+            if len(states.intersection(self.F)):
+                newF.add(i)
+        return DFA(newQ, self.sigma, newDelta, set([newS]), newF)
 
+class DFA(NFA):
     def belongs(self, s):
-        q = self.s
+        q = list(self.S)[0]
         for i in s:
-            q = self.delta[q][i]
+            q = list(self.delta[q][i])[0]
         return q in self.F
 
+    def funDelta(self, q, a):
+        if (q in self.delta) and (a in self.delta[q]):
+            return self.delta[q][a]
+        return None
+
     def minimize(self):
-        pass
+        newQ = set()
+        newDelta = dict()
+        newF = set()
+        marked = set()
+        unMarkd = set()
+        reachable = BFS(self, self.S, self.sigma)
+        while True:
+            isMarked = False
+            for i in range(len(self.Q)):
+                if i not in reachable:
+                    continue
+                for j in range(i + 1, len(self.Q)):
+                    if j not in reachable:
+                        continue
+                    if (i, j) in marked:
+                        continue
+                    for sym in self.sigma:
+                        nexti = list(self.funDelta(i, sym))[0]
+                        nextj = list(self.funDelta(j, sym))[0]
+                        if (i in self.F and j not in self.F) or (i not in self.F and j in self.F) or ((nexti, nextj) in marked):
+                            marked.add((i, j))
+                            isMarked = True
+
+            # No marked occured in current round
+            if not isMarked:
+                break
+        for i in range(len(self.Q)):
+            for j in range(i + 1, len(self.Q)):
+                if (i in reachable) and (j in reachable) and ((i, j) not in marked):
+                    unMarkd.add((i, j))
+        parent = dsu(len(self.Q), unMarkd)
+        renum = renumber(parent, reachable)
+
+        newS = renum[parent[list(self.S)[0]]]
+
+        for i in self.F:
+            if i not in reachable:
+                continue
+            newF.add(renum[parent[i]])
+
+        for i in range(len(renum)):
+            newQ.add(i)
+
+        for i in range(len(self.Q)):
+            if parent[i] not in renum or renum[parent[i]] in newDelta:
+                continue
+            newDelta[renum[parent[i]]] = dict()
+            for sym in self.sigma:
+                newDelta[renum[parent[i]]][sym] = set([renum[parent[list(self.delta[i][sym])[0]]]])
+        return DFA(newQ, self.sigma, newDelta, set([newS]), newF)
+        
 
     def complement(self):
         Fprime = self.Q
         for i in self.F:
             Fprime.discard(i)
-        return DFA(self.Q, self.sigma, self.delta, self.s, Fprime)
+        return DFA(self.Q, self.sigma, self.delta, self.S, Fprime)
 
     @staticmethod
     def string_to_DFA(s):
@@ -197,7 +278,24 @@ class DFA:
         nfa = NFA.exp_to_NFA(exp)
         return nfa.getDFA()
 
-exp = "star(union(symbol(a),symbol(b)))"
-b = parser(exp)
-c = NFA.exp_to_NFA(b)
-print(c)
+    def intersection(self, dfa):
+        newQ = set()
+        newDelta = dict()
+        newF = set()
+        newS = self.S * len(dfa.Q) + dfa.S
+        for i in range(len(self.Q) * len(dfa.Q)):
+            newQ.add(i)
+            newDelta[i] = dict()
+        
+        for i in range(len(self.Q) * len(dfa.Q)):
+            for sym in self.sigma:
+                first = i / len(dfa.Q)
+                second = i % len(dfa.Q)
+                nxt = self.delta[first][sym] * len(dfa.Q) + self.delta[second][sym]
+                newDelta[i][sym] = nxt
+        
+        for i in range(len(self.Q)):
+            for j in range(len(dfa.Q)):
+                if i in self.F and j in dfa.F:
+                    newF.add(i* len(dfa.Q) + j)
+        return DFA(newQ, self.sigma, newDelta, newS, newF)
