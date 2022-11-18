@@ -1,6 +1,6 @@
 from Tree import Node
 from parser import parser
-from DFS import DFS, BFS
+from DFS import BFS
 from constants import epsilon
 from DSU import dsu, renumber, find
 
@@ -152,7 +152,7 @@ class NFA:
         return nfa
 
     def state_closure(self, k, symbols):
-        return DFS(self, k, symbols)
+        return BFS(self, k, symbols)
 
     def getDFA(self):
         dfa = DFA(set(), set(), dict(), None, set())
@@ -173,7 +173,7 @@ class NFA:
                 for j in range(i.bit_length()):
                     if (i & (1 << j)) != 0 and (j in self.delta) and (sym in self.delta[j]):
                         for k in self.delta[j][sym]:
-                            reachable = self.state_closure(k, set([epsilon]))
+                            reachable = self.state_closure(set([k]), set([epsilon]))
 
                         for k in reachable:
                             reach_states = reach_states | (1 << k)
@@ -182,7 +182,9 @@ class NFA:
         # define s
         newS = 0
         for i in self.S:
-            reachable = self.state_closure(i, set([epsilon]))
+            reachable = self.state_closure(set([i]), set([epsilon]))
+            # print(i, reachable)
+            # reachable = BFS(self, i, set([epsilon]))
             for j in reachable:
                 newS = newS | (1 << j)
         
